@@ -2,20 +2,11 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
 
-// Словарь цветов для кружочков
 const colorMap = {
-    "белый": "#ffffff",
-    "черный": "#000000",
-    "красный": "#ff0000",
-    "синий": "#0000ff",
-    "голубой": "#87ceeb",
-    "зеленый": "#008000",
-    "желтый": "#ffff00",
-    "розовый": "#ffc0cb",
-    "бежевый": "#f5f5dc",
-    "серый": "#808080",
-    "фиолетовый": "#800080",
-    "оранжевый": "#ffa500"
+    "белый": "#ffffff", "черный": "#000000", "красный": "#ff0000",
+    "синий": "#0000ff", "голубой": "#87ceeb", "зеленый": "#008000",
+    "желтый": "#ffff00", "розовый": "#ffc0cb", "бежевый": "#f5f5dc",
+    "серый": "#808080", "фиолетовый": "#800080", "оранжевый": "#ffa500"
 };
 
 const Catalog = () => {
@@ -29,10 +20,11 @@ const Catalog = () => {
     const [selectedBrands, setSelectedBrands] = useState([]);
     const [selectedSizes, setSelectedSizes] = useState([]);
     const [selectedColors, setSelectedColors] = useState([]);
-    const [priceRange, setPriceRange] = useState({ min: 0, max: 0 }); // Начальное 0
+    const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
     const [absoluteMaxPrice, setAbsoluteMaxPrice] = useState(0);
+    const [minRating, setMinRating] = useState(0); 
 
-    const [openSections, setOpenSections] = useState({ cat: true, brand: true, size: true, color: true });
+    const [openSections, setOpenSections] = useState({ cat: true, brand: true, size: true, color: true, rating: true });
 
     useEffect(() => {
         const fetchData = async () => {
@@ -43,17 +35,35 @@ const Catalog = () => {
                 ]);
                 
                 const allProducts = pRes.data;
-                setProducts(allProducts);
-                setCategories(cRes.data);
-                setFilteredProducts(allProducts);
 
-                // Вычисляем максимальную цену из всех товаров
-                if (allProducts.length > 0) {
-                    const maxPrice = Math.ceil(Math.max(...allProducts.map(p => p.basePrice)));
+                // Получаем рейтинги для товаров
+                const productsWithRating = await Promise.all(allProducts.map(async (p) => {
+                    try {
+                        const rRes = await axios.get(`http://localhost:8080/api/reviews/${p.productId}`);
+                        const reviews = rRes.data;
+                        const avg = reviews.length > 0 
+                            ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length) 
+                            : 0;
+                        return { ...p, rating: avg, reviewCount: reviews.length };
+                    } catch {
+                        return { ...p, rating: 0, reviewCount: 0 };
+                    }
+                }));
+
+                setProducts(productsWithRating);
+                setCategories(cRes.data);
+                setFilteredProducts(productsWithRating);
+
+                if (productsWithRating.length > 0) {
+                    const maxPrice = Math.ceil(Math.max(...productsWithRating.map(p => p.basePrice)));
                     setAbsoluteMaxPrice(maxPrice);
                     setPriceRange({ min: 0, max: maxPrice });
                 }
-            } catch (err) { console.error(err); } finally { setLoading(false); }
+            } catch (err) { 
+                console.error(err); 
+            } finally { 
+                setLoading(false); 
+            }
         };
         fetchData();
     }, []);
@@ -62,29 +72,30 @@ const Catalog = () => {
         setter(list.includes(val) ? list.filter(i => i !== val) : [...list, val]);
     };
 
-    useEffect(() => {
-        const res = products.filter(p => {
-            const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesPrice = p.basePrice <= priceRange.max;
-            const matchesCat = selectedCatIds.length === 0 || p.categories?.some(c => selectedCatIds.includes(c.categoryId));
-            const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
-            
-            const variantMatch = p.variants?.some(v => 
-                (selectedSizes.length === 0 || selectedSizes.includes(v.size)) &&
-                (selectedColors.length === 0 || selectedColors.includes(v.color))
-            );
-            
-            return matchesSearch && matchesPrice && matchesCat && matchesBrand && (p.variants?.length ? variantMatch : true);
-        });
-        setFilteredProducts(res);
-    }, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, products]);
-
     const getUniqueValues = (key, isVariant = false) => {
         const vals = isVariant 
             ? products.flatMap(p => p.variants?.map(v => v[key]) || [])
             : products.map(p => p[key]);
         return [...new Set(vals)].filter(Boolean).sort();
     };
+
+    useEffect(() => {
+        const res = products.filter(p => {
+            const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesPrice = p.basePrice <= priceRange.max;
+            const matchesCat = selectedCatIds.length === 0 || p.categories?.some(c => selectedCatIds.includes(c.categoryId));
+            const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
+            const matchesRating = p.rating >= minRating;
+            
+            const variantMatch = p.variants?.some(v => 
+                (selectedSizes.length === 0 || selectedSizes.includes(v.size)) &&
+                (selectedColors.length === 0 || selectedColors.includes(v.color))
+            );
+            
+            return matchesSearch && matchesPrice && matchesCat && matchesBrand && matchesRating && (p.variants?.length ? variantMatch : true);
+        });
+        setFilteredProducts(res);
+    }, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, minRating, products]);
 
     if (loading) return <div className="text-center my-5 py-5"><div className="spinner-border text-primary shadow-sm"></div></div>;
 
@@ -94,12 +105,12 @@ const Catalog = () => {
                 .filter-card { border: none; background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); }
                 .filter-header { cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 12px 5px; border-bottom: 1px solid #f8f9fa; }
                 .filter-content { padding: 15px 5px; max-height: 250px; overflow-y: auto; }
-                .filter-content::-webkit-scrollbar { width: 4px; }
-                .filter-content::-webkit-scrollbar-thumb { background: #eee; border-radius: 10px; }
                 .color-circle { width: 14px; height: 14px; border-radius: 50%; display: inline-block; margin-right: 8px; border: 1px solid #ddd; vertical-align: middle; }
                 .sticky-filters { position: sticky; top: 100px; }
-                .form-check-input:checked { background-color: #000; border-color: #000; }
-                .price-label { font-size: 1.1rem; font-weight: 700; color: #007bff; }
+                .star-rating-filter { cursor: pointer; transition: 0.2s; padding: 6px 8px; border-radius: 8px; }
+                .star-rating-filter:hover { background: #f8f9fa; }
+                .star-rating-filter.active { background: #000; color: #fff; }
+                .star-rating-filter.active .text-warning { color: #ffc107 !important; }
             `}</style>
 
             <div className="row g-4">
@@ -109,7 +120,6 @@ const Catalog = () => {
                         
                         <input type="text" className="form-control mb-4 border-0 bg-light py-2 px-3 shadow-none rounded-3" placeholder="Найти..." onChange={e => setSearchTerm(e.target.value)} />
 
-                        {/* Категории (как на скрине) */}
                         <FilterSection title="Категории" isOpen={openSections.cat} onToggle={() => setOpenSections({...openSections, cat: !openSections.cat})}>
                             {categories.filter(c => !c.parentId).map(parent => (
                                 <div key={parent.categoryId} className="mb-2">
@@ -129,7 +139,21 @@ const Catalog = () => {
                             ))}
                         </FilterSection>
 
-                        {/* Бренды */}
+                        <FilterSection title="Рейтинг" isOpen={openSections.rating} onToggle={() => setOpenSections({...openSections, rating: !openSections.rating})}>
+                            {[5, 4, 3, 2, 1].map(star => (
+                                <div 
+                                    key={star} 
+                                    className={`star-rating-filter small mb-1 ${minRating === star ? 'active' : ''}`}
+                                    onClick={() => setMinRating(minRating === star ? 0 : star)}
+                                >
+                                    {[...Array(5)].map((_, i) => (
+                                        <i key={i} className={`bi bi-star${i < star ? '-fill text-warning' : ''} me-1`}></i>
+                                    ))}
+                                    <span className="ms-1">{star === 5 ? '5.0' : 'и выше'}</span>
+                                </div>
+                            ))}
+                        </FilterSection>
+
                         <FilterSection title="Бренды" isOpen={openSections.brand} onToggle={() => setOpenSections({...openSections, brand: !openSections.brand})}>
                             {getUniqueValues('brand').map(b => (
                                 <div key={b} className="form-check small mb-2">
@@ -139,7 +163,6 @@ const Catalog = () => {
                             ))}
                         </FilterSection>
 
-                        {/* Размеры */}
                         <FilterSection title="Размеры" isOpen={openSections.size} onToggle={() => setOpenSections({...openSections, size: !openSections.size})}>
                             <div className="d-flex flex-wrap gap-2">
                                 {getUniqueValues('size', true).map(s => (
@@ -148,7 +171,6 @@ const Catalog = () => {
                             </div>
                         </FilterSection>
 
-                        {/* Цвета с кружками */}
                         <FilterSection title="Цвета" isOpen={openSections.color} onToggle={() => setOpenSections({...openSections, color: !openSections.color})}>
                             {getUniqueValues('color', true).map(c => (
                                 <div key={c} className="form-check small mb-2">
@@ -161,13 +183,12 @@ const Catalog = () => {
                             ))}
                         </FilterSection>
 
-                        {/* Цена (Максимум подтягивается сам) */}
                         <div className="mt-4 pt-3 border-top">
                             <div className="d-flex justify-content-between align-items-center mb-2">
                                 <span className="small text-uppercase fw-bold opacity-50">До</span>
-                                <span className="price-label">{priceRange.max} BYN</span>
+                                <span className="price-label fw-bold text-primary">{priceRange.max} BYN</span>
                             </div>
-                            <input type="range" className="form-range custom-range" min="0" max={absoluteMaxPrice} value={priceRange.max} onChange={e => setPriceRange({...priceRange, max: Number(e.target.value)})} />
+                            <input type="range" className="form-range" min="0" max={absoluteMaxPrice} value={priceRange.max} onChange={e => setPriceRange({...priceRange, max: Number(e.target.value)})} />
                         </div>
                     </div>
                 </aside>
@@ -182,7 +203,6 @@ const Catalog = () => {
     );
 };
 
-// Вспомогательный UI-компонент
 const FilterSection = ({ title, isOpen, onToggle, children }) => (
     <div className="mb-2">
         <div className="filter-header" onClick={onToggle}>
@@ -196,8 +216,14 @@ const FilterSection = ({ title, isOpen, onToggle, children }) => (
 const ProductCard = ({ product }) => (
     <div className="col">
         <div className="card h-100 border-0 shadow-sm rounded-4 overflow-hidden">
-            <div style={{height: '240px', overflow: 'hidden'}}>
+            <div style={{height: '240px', overflow: 'hidden', position: 'relative'}}>
                 <img src={product.images?.[0] ? `http://localhost:8080${product.images[0].imageUrl}` : '/no-photo.png'} className="card-img-top h-100 w-100" style={{objectFit: 'cover'}} alt={product.name} />
+                {product.rating > 0 && (
+                    <div className="position-absolute top-0 end-0 m-2 badge bg-white text-dark shadow-sm rounded-pill">
+                        <i className="bi bi-star-fill text-warning me-1"></i>
+                        {product.rating.toFixed(1)}
+                    </div>
+                )}
             </div>
             <div className="card-body">
                 <div className="d-flex justify-content-between mb-2">
@@ -205,6 +231,12 @@ const ProductCard = ({ product }) => (
                     <span className="fw-bold text-primary">{product.basePrice} BYN</span>
                 </div>
                 <h6 className="card-title fw-bold text-truncate">{product.name}</h6>
+                <div className="mb-2">
+                    {[...Array(5)].map((_, i) => (
+                        <i key={i} className={`bi bi-star${i < Math.round(product.rating) ? '-fill text-warning' : ''} small`}></i>
+                    ))}
+                    <span className="small text-muted ms-2">({product.reviewCount || 0})</span>
+                </div>
                 <Link to={`/product/${product.productId}`} className="btn btn-outline-dark btn-sm w-100 rounded-pill mt-2">Посмотреть</Link>
             </div>
         </div>

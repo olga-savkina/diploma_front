@@ -14,7 +14,7 @@ const Blog = () => {
         axios.get('http://localhost:8080/api/articles').then(res => setArticles(res.data));
         
         // Категории тоже лучше сделать доступными по публичному пути /api/categories
-        axios.get('http://localhost:8080/api/categories').then(res => 
+        axios.get('http://localhost:8080/api/products/categories').then(res => 
             setCategories(res.data.filter(c => c.targetType === 'ARTICLE'))
         );
     }, []);
