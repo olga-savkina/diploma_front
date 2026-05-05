@@ -26,10 +26,20 @@ const AdminSidebar = () => {
                         <i className="bi bi-cart-check me-2"></i> Все заказы
                     </Link>
                 </li>
-                {/* НОВЫЙ ПУНКТ */}
                 <li className="nav-item mb-2">
                     <Link className="nav-link text-white d-flex align-items-center" to="/admin/users">
                         <i className="bi bi-people me-2"></i> Пользователи
+                    </Link>
+                </li>
+
+                <li className="nav-item mb-2">
+                    <Link className="nav-link text-white d-flex align-items-center" to="/admin/blog">
+                        <i className="bi bi-journal-text me-2"></i> Блог
+                    </Link>
+                </li>
+                <li className="nav-item mb-2">
+                    <Link className="nav-link text-white d-flex align-items-center" to="/admin/reviews">
+                        <i className="bi bi-chat-left-quote me-2"></i> Отзывы
                     </Link>
                 </li>
             </ul>

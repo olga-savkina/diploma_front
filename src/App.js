@@ -14,6 +14,9 @@ import Catalog from './pages/Catalog';
 import ProductPage from './pages/ProductPage';
 import CartPage from './pages/CartPage';
 import AdminOrders from './pages/AdminOrders';
+import AdminReviews from './pages/AdminReviews';
+import AdminArticles from './pages/AdminArticles';
+import Blog from './pages/Blog';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -55,12 +58,15 @@ function App() {
             <Route path="/register" element={!user ? <Register /> : <Navigate to="/home" />} />
             <Route path="/profile"  element={user ? <Profile user={user} /> : <Navigate to="/login" />}  />
             <Route path="/catalog" element={<Catalog user={user} />} />
+             <Route path="/blog" element={<Blog user={user} />} />
             <Route path="/cart" element={<CartPage />} />
             <Route path="/product/:id" element={<ProductPage user={user} />} />
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="/admin/warehouse" element={<AdminWarehouse />} />
             <Route path="/admin/categories" element={<AdminCategories />} />
             <Route path="/admin/orders" element={<AdminOrders />} />
+            <Route path="/admin/reviews" element={<AdminReviews />} />
+             <Route path="/admin/blog" element={<AdminArticles />} />
             <Route path="/" element={<Navigate to="/home" />} />
           </Routes>
         </div>
