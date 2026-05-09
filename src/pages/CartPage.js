@@ -1,71 +1,135 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
+const CITIES = ["Минск", "Гомель", "Брест", "Гродно", "Витебск", "Могилев"];
+
 const CartPage = () => {
+    const navigate = useNavigate();
     const [cartItems, setCartItems] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [address, setAddress] = useState(''); // Состояние для адреса
-    const navigate = useNavigate();
+    
+    // Состояния бонусов
+    const [availableBonuses, setAvailableBonuses] = useState(0);
+    const [useBonuses, setUseBonuses] = useState(false);
 
-    useEffect(() => {
-        const savedCart = JSON.parse(localStorage.getItem('cart')) || [];
+    // Состояния адреса
+    const [selectedCity, setSelectedCity] = useState('');
+    const [customCity, setCustomCity] = useState(''); 
+    const [isCustomCity, setIsCustomCity] = useState(false);
+    const [streetAddress, setStreetAddress] = useState('');
+
+    // Оплата
+    const [paymentMethod, setPaymentMethod] = useState('CASH');
+    const [cardDetails, setCardDetails] = useState({ number: '', expiry: '', cvc: '' });
+
+    // --- ФУНКЦИИ ОБРАБОТКИ ---
+
+    const handleCityChange = (e) => {
+        const value = e.target.value;
+        if (value === 'OTHER') {
+            setIsCustomCity(true);
+            setSelectedCity('');
+        } else {
+            setSelectedCity(value);
+            setIsCustomCity(false);
+        }
+    };
+
+    const handleCardNumber = (e) => {
+        // Оставляем только цифры и ограничиваем 16 знаками
+        let v = e.target.value.replace(/\D/g, '').substring(0, 16);
+        // Разбиваем по 4 цифры пробелом для красоты
+        v = v.replace(/(.{4})/g, '$1 ').trim();
+        setCardDetails({ ...cardDetails, number: v });
+    };
+
+    const handleCVC = (e) => {
+        const v = e.target.value.replace(/\D/g, '').substring(0, 3);
+        setCardDetails({ ...cardDetails, cvc: v });
+    };
+
+    // --- ФУНКЦИЯ ЗАГРУЗКИ ---
+    const loadData = useCallback(async () => {
+        const userData = JSON.parse(localStorage.getItem('user'));
+        if (!userData) return;
+
+        const userName = userData.username || userData.email?.split('@')[0];
+        const cartKey = `cart_${userName}`;
+        
+        const savedCart = JSON.parse(localStorage.getItem(cartKey)) || [];
         setCartItems(savedCart);
+        
+        try {
+            const res = await axios.get('http://localhost:8080/api/orders/me/bonuses', { withCredentials: true });
+            setAvailableBonuses(res.data.bonuses || 0);
+        } catch (err) {
+            console.warn("Бонусы пока недоступны");
+            setAvailableBonuses(0);
+        }
     }, []);
 
-    const updateQuantity = (variantId, delta) => {
-        const updated = cartItems.map(item => {
-            if (item.variantId === variantId) {
-                const newQty = Math.max(1, item.quantity + delta);
-                return { ...item, quantity: newQty };
-            }
-            return item;
-        });
-        setCartItems(updated);
-        localStorage.setItem('cart', JSON.stringify(updated));
-        window.dispatchEvent(new Event('storage'));
-    };
+    useEffect(() => {
+        loadData();
+        window.addEventListener('storage', loadData);
+        window.addEventListener('cartUpdated', loadData);
+        return () => {
+            window.removeEventListener('storage', loadData);
+            window.removeEventListener('cartUpdated', loadData);
+        };
+    }, [loadData]);
 
-    const removeItem = (variantId) => {
-        const filtered = cartItems.filter(item => item.variantId !== variantId);
-        setCartItems(filtered);
-        localStorage.setItem('cart', JSON.stringify(filtered));
-        window.dispatchEvent(new Event('storage'));
-    };
+    // --- РАСЧЕТЫ ---
+    const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const bonusesToSubtract = useBonuses ? Math.min(availableBonuses, subtotal * 0.5) : 0;
+    const finalAmount = subtotal - bonusesToSubtract;
+    const bonusesToEarn = finalAmount * 0.05; // Начисляем 5% от покупки
 
-    const totalAmount = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
+    // --- ОФОРМЛЕНИЕ ЗАКАЗА ---
     const handleCheckout = async () => {
-        if (!address.trim()) {
-            alert("Пожалуйста, введите адрес доставки");
+        const userData = JSON.parse(localStorage.getItem('user'));
+        if (!userData) {
+            alert("Пожалуйста, войдите в систему");
+            return;
+        }
+
+        const finalCityName = isCustomCity ? customCity : selectedCity;
+        if (!finalCityName || !streetAddress.trim()) {
+            alert("Заполните данные доставки");
+            return;
+        }
+
+        if (paymentMethod === 'CARD' && (cardDetails.number.length < 19 || cardDetails.cvc.length < 3)) {
+            alert("Проверьте данные карты");
             return;
         }
 
         setLoading(true);
         try {
-            // Формируем данные строго под наш OrderRequest DO на бэкенде
             const orderData = {
-                shippingAddress: address,
                 items: cartItems.map(item => ({
                     variantId: item.variantId,
                     quantity: item.quantity,
                     price: item.price
-                }))
+                })),
+                shippingAddress: `${finalCityName}, ${streetAddress}`,
+                paymentMethod: paymentMethod,
+                totalAmount: finalAmount,
+                usedBonuses: bonusesToSubtract,
+                status: paymentMethod === 'CARD' ? 'PAID' : 'PENDING'
             };
 
             const res = await axios.post('http://localhost:8080/api/orders', orderData, { withCredentials: true });
             
             if (res.status === 200 || res.status === 201) {
-                alert("Заказ успешно оформлен! Вам начислены бонусные баллы.");
-                localStorage.removeItem('cart');
-                setCartItems([]);
-                window.dispatchEvent(new Event('storage'));
-                navigate('/profile'); 
+                alert("Заказ успешно оформлен!");
+                const userName = userData.username || userData.email?.split('@')[0];
+                localStorage.removeItem(`cart_${userName}`);
+                window.dispatchEvent(new Event('cartUpdated'));
+                navigate('/profile');
             }
         } catch (err) {
-            console.error("Ошибка при оформлении:", err);
-            const errorMessage = err.response?.data?.message || "Произошла ошибка при создании заказа";
-            alert(errorMessage);
+            alert(err.response?.data?.message || "Ошибка при оформлении");
         } finally {
             setLoading(false);
         }
@@ -74,11 +138,10 @@ const CartPage = () => {
     if (cartItems.length === 0) {
         return (
             <div className="container my-5 text-center">
-                <i className="bi bi-cart-x text-muted" style={{ fontSize: '4rem' }}></i>
-                <h2 className="mt-3 text-secondary">Ваша корзина пуста</h2>
-                <button onClick={() => navigate('/catalog')} className="btn btn-primary mt-3 px-4 rounded-pill">
-                    Перейти в каталог
-                </button>
+                <div className="p-5 bg-light rounded-5">
+                    <h2 className="text-muted">Корзина пуста</h2>
+                    <button onClick={() => navigate('/catalog')} className="btn btn-primary btn-lg rounded-pill mt-3">Перейти в каталог</button>
+                </div>
             </div>
         );
     }
@@ -87,89 +150,146 @@ const CartPage = () => {
         <div className="container my-5">
             <h2 className="fw-bold mb-4">Оформление заказа</h2>
             <div className="row g-4">
-                <div className="col-md-8">
-                    {/* Список товаров */}
-                    {cartItems.map(item => (
-                        <div key={item.variantId} className="card border-0 shadow-sm mb-3 p-3 rounded-4">
-                            <div className="row align-items-center">
-                                <div className="col-md-2 col-3">
-                                    <img 
-                                        src={item.image ? `http://localhost:8080${item.image}` : '/no-photo.png'} 
-                                        alt={item.name} 
-                                        className="img-fluid rounded-3" 
-                                    />
+                <div className="col-lg-8">
+                    {/* 1. ТОВАРЫ */}
+                    <div className="card border-0 shadow-sm p-4 mb-4 rounded-4">
+                        <h5 className="fw-bold mb-4">1. Ваши товары</h5>
+                        {cartItems.map((item, idx) => (
+                            <div key={idx} className={`d-flex align-items-center mb-3 pb-3 ${idx !== cartItems.length - 1 ? 'border-bottom' : ''}`}>
+                                <img 
+                                    src={`http://localhost:8080${item.image}`} 
+                                    alt={item.name} 
+                                    className="rounded-3 me-3" 
+                                    style={{ width: '70px', height: '70px', objectFit: 'cover' }}
+                                />
+                                <div className="flex-grow-1">
+                                    <h6 className="mb-0 fw-bold">{item.name}</h6>
+                                    <small className="text-muted">Кол-во: {item.quantity} шт.</small>
                                 </div>
-                                <div className="col-md-4 col-9">
-                                    <h6 className="mb-1 fw-bold">{item.name}</h6>
-                                    <small className="text-muted d-block text-capitalize">
-                                        {item.color} {item.size && `| Размер: ${item.size}`}
-                                    </small>
-                                </div>
-                                <div className="col-md-3 col-6 mt-md-0 mt-3">
-                                    <div className="d-flex align-items-center gap-2">
-                                        <button className="btn btn-sm btn-outline-secondary rounded-circle" onClick={() => updateQuantity(item.variantId, -1)}>-</button>
-                                        <span className="fw-bold px-2">{item.quantity}</span>
-                                        <button className="btn btn-sm btn-outline-secondary rounded-circle" onClick={() => updateQuantity(item.variantId, 1)}>+</button>
-                                    </div>
-                                </div>
-                                <div className="col-md-2 col-4 mt-md-0 mt-3 fw-bold text-primary text-end">
-                                    {(item.price * item.quantity).toFixed(2)} BYN
-                                </div>
-                                <div className="col-md-1 col-2 mt-md-0 mt-3 text-end">
-                                    <button className="btn btn-link text-danger p-0" onClick={() => removeItem(item.variantId)}>
-                                        <i className="bi bi-trash"></i>
-                                    </button>
+                                <div className="text-end">
+                                    <span className="fw-bold">{(item.price * item.quantity).toFixed(2)} BYN</span>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
 
-                    {/* Поле адреса */}
-                    <div className="card border-0 shadow-sm p-4 mt-4 rounded-4">
-                        <h5 className="fw-bold mb-3">Адрес доставки</h5>
-                        <textarea 
-                            className="form-control border-0 bg-light p-3 rounded-3 shadow-none" 
-                            rows="3" 
-                            placeholder="Введите ваш полный адрес (город, улица, дом, квартира)..."
-                            value={address}
-                            onChange={(e) => setAddress(e.target.value)}
-                        ></textarea>
+                    {/* 2. ДОСТАВКА */}
+                    <div className="card border-0 shadow-sm p-4 mb-4 rounded-4">
+                        <h5 className="fw-bold mb-3">2. Куда доставить?</h5>
+                        <div className="row g-3">
+                            <div className="col-md-6">
+                                <label className="small text-muted">Город</label>
+                                {!isCustomCity ? (
+                                    <select className="form-select border-0 bg-light p-3" value={selectedCity} onChange={handleCityChange}>
+                                        <option value="">Выберите город...</option>
+                                        {CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                        <option value="OTHER">Другой город...</option>
+                                    </select>
+                                ) : (
+                                    <div className="input-group">
+                                        <input 
+                                            type="text" className="form-control border-0 bg-light p-3" 
+                                            placeholder="Напишите ваш город"
+                                            value={customCity}
+                                            onChange={(e) => setCustomCity(e.target.value)}
+                                        />
+                                        <button className="btn btn-outline-secondary border-0" onClick={() => setIsCustomCity(false)}>✕</button>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="col-md-6">
+                                <label className="small text-muted">Адрес (Улица, дом, кв)</label>
+                                <input 
+                                    type="text" className="form-control border-0 bg-light p-3" 
+                                    placeholder="ул. Ленина 10, кв. 5"
+                                    value={streetAddress}
+                                    onChange={(e) => setStreetAddress(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 3. ОПЛАТА */}
+                    <div className="card border-0 shadow-sm p-4 rounded-4">
+                        <h5 className="fw-bold mb-3">3. Способ оплаты</h5>
+                        <div className="d-flex gap-3 mb-4">
+                            <button 
+                                className={`flex-fill p-3 rounded-4 border btn text-start ${paymentMethod === 'CASH' ? 'border-primary bg-light' : ''}`}
+                                onClick={() => setPaymentMethod('CASH')}
+                            >
+                                <div className="fw-bold">Наличные</div>
+                                <small className="text-muted">При получении</small>
+                            </button>
+                            <button 
+                                className={`flex-fill p-3 rounded-4 border btn text-start ${paymentMethod === 'CARD' ? 'border-primary bg-light' : ''}`}
+                                onClick={() => setPaymentMethod('CARD')}
+                            >
+                                <div className="fw-bold">Картой онлайн</div>
+                                <small className="text-muted">Visa, MasterCard, БЕЛКАРТ</small>
+                            </button>
+                        </div>
+
+                        {paymentMethod === 'CARD' && (
+                            <div className="p-4 bg-light rounded-4">
+                                <div className="mb-3">
+                                    <label className="small text-muted mb-1">Номер карты</label>
+                                    <input 
+                                        type="text" className="form-control border-0 p-3 shadow-sm" 
+                                        placeholder="0000 0000 0000 0000" 
+                                        value={cardDetails.number} onChange={handleCardNumber} 
+                                    />
+                                </div>
+                                <div className="row g-3">
+                                    <div className="col-6">
+                                        <label className="small text-muted mb-1">Срок действия</label>
+                                        <input type="text" className="form-control border-0 p-3 shadow-sm" placeholder="ММ/ГГ" value={cardDetails.expiry} onChange={(e) => {
+                                            let v = e.target.value.replace(/\D/g, '').substring(0, 4);
+                                            if (v.length > 2) v = v.substring(0, 2) + '/' + v.substring(2);
+                                            setCardDetails({...cardDetails, expiry: v});
+                                        }} />
+                                    </div>
+                                    <div className="col-6">
+                                        <label className="small text-muted mb-1">CVC</label>
+                                        <input type="password" className="form-control border-0 p-3 shadow-sm" placeholder="000" value={cardDetails.cvc} onChange={handleCVC} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                <div className="col-md-4">
-                    <div className="card border-0 shadow-sm p-4 bg-light rounded-4 sticky-top" style={{ top: '100px' }}>
-                        <h5 className="fw-bold mb-4">Детали заказа</h5>
+                {/* ПРАВАЯ КОЛОНКА */}
+                <div className="col-lg-4">
+                    <div className="card border-0 shadow-sm p-4 rounded-4 sticky-top" style={{ top: '100px' }}>
+                        <h5 className="fw-bold mb-4">Итого</h5>
                         <div className="d-flex justify-content-between mb-2">
-                            <span className="text-muted">Товары:</span>
-                            <span>{totalAmount.toFixed(2)} BYN</span>
+                            <span className="text-muted">Товары ({cartItems.length})</span>
+                            <span>{subtotal.toFixed(2)} BYN</span>
                         </div>
-                        <div className="d-flex justify-content-between mb-4">
-                            <span className="text-muted">Доставка:</span>
-                            <span className="text-success fw-bold">Бесплатно</span>
-                        </div>
-                        <div className="p-3 bg-white rounded-3 mb-4 border-start border-primary border-4">
-                            <small className="text-muted d-block">Будет начислено баллов:</small>
-                            <span className="fw-bold text-primary">+{(totalAmount * 0.1).toFixed(0)}</span>
+                        <div className="bg-light p-3 rounded-4 my-3">
+                            <div className="form-check form-switch d-flex justify-content-between align-items-center p-0">
+                                <label className="form-check-label fw-bold small">Списать бонусы</label>
+                                <input 
+                                    className="form-check-input ms-0" type="checkbox" role="switch"
+                                    checked={useBonuses}
+                                    disabled={availableBonuses <= 0}
+                                    onChange={() => setUseBonuses(!useBonuses)}
+                                    style={{ width: '40px', height: '20px' }}
+                                />
+                            </div>
+                            <small className="text-muted d-block mt-1">Доступно: {availableBonuses.toFixed(2)} Б</small>
+                            {useBonuses && <div className="text-success small mt-1 fw-bold">Скидка: -{bonusesToSubtract.toFixed(2)} BYN</div>}
                         </div>
                         <hr />
-                        <div className="d-flex justify-content-between mb-4">
-                            <span className="fw-bold">К оплате:</span>
-                            <h4 className="fw-bold text-primary">{totalAmount.toFixed(2)} BYN</h4>
+                        <div className="d-flex justify-content-between align-items-center mb-4">
+                            <span className="h5 fw-bold mb-0">К оплате</span>
+                            <span className="h3 fw-bold text-primary mb-0">{finalAmount.toFixed(2)} BYN</span>
                         </div>
-                        <button 
-                            className="btn btn-dark w-100 py-3 rounded-pill fw-bold shadow-sm" 
-                            onClick={handleCheckout}
-                            disabled={loading}
-                        >
-                            {loading ? <span className="spinner-border spinner-border-sm me-2"></span> : null}
-                            {loading ? "Оформление..." : "Подтвердить заказ"}
-                        </button>
-                        <button 
-                            onClick={() => navigate('/catalog')} 
-                            className="btn btn-link w-100 mt-2 text-muted text-decoration-none small"
-                        >
-                            ← Вернуться к покупкам
+                        <div className="p-3 bg-primary bg-opacity-10 border border-primary border-opacity-25 rounded-4 mb-4 text-center">
+                            <small className="text-primary fw-bold">Начислим: +{bonusesToEarn.toFixed(2)} Б</small>
+                        </div>
+                        <button className="btn btn-dark w-100 py-3 rounded-pill fw-bold shadow-lg" onClick={handleCheckout} disabled={loading}>
+                            {loading ? <span className="spinner-border spinner-border-sm"></span> : (paymentMethod === 'CARD' ? 'Оплатить и заказать' : 'Подтвердить заказ')}
                         </button>
                     </div>
                 </div>

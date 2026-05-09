@@ -14,13 +14,13 @@ const Catalog = () => {
     const [categories, setCategories] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [loading, setLoading] = useState(true);
-
+    const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
+    const [ageRange, setAgeRange] = useState({ min: 0, max: 120 }); 
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCatIds, setSelectedCatIds] = useState([]);
     const [selectedBrands, setSelectedBrands] = useState([]);
     const [selectedSizes, setSelectedSizes] = useState([]);
     const [selectedColors, setSelectedColors] = useState([]);
-    const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
     const [absoluteMaxPrice, setAbsoluteMaxPrice] = useState(0);
     const [minRating, setMinRating] = useState(0); 
 
@@ -36,7 +36,7 @@ const Catalog = () => {
                 
                 const allProducts = pRes.data;
 
-                // Получаем рейтинги для товаров
+                // Получаем рейтинги параллельно для всех товаров
                 const productsWithRating = await Promise.all(allProducts.map(async (p) => {
                     try {
                         const rRes = await axios.get(`http://localhost:8080/api/reviews/${p.productId}`);
@@ -54,20 +54,35 @@ const Catalog = () => {
                 setCategories(cRes.data);
                 setFilteredProducts(productsWithRating);
 
+                // Инициализация фильтров
                 if (productsWithRating.length > 0) {
+                    // Цены
                     const maxPrice = Math.ceil(Math.max(...productsWithRating.map(p => p.basePrice)));
                     setAbsoluteMaxPrice(maxPrice);
                     setPriceRange({ min: 0, max: maxPrice });
+
+                    // Возраст (собираем все ageMin и ageMax из всех вариантов всех товаров)
+                    const allAgeValues = productsWithRating.flatMap(p => 
+                        p.variants?.flatMap(v => [v.ageMin, v.ageMax]) || []
+                    ).filter(val => val !== null && val !== undefined);
+
+                    if (allAgeValues.length > 0) {
+                        setAgeRange({ 
+                            min: Math.min(...allAgeValues), 
+                            max: Math.max(...allAgeValues) 
+                        });
+                    } else {
+                        setAgeRange({ min: 0, max: 36 }); // Значение по умолчанию
+                    }
                 }
             } catch (err) { 
-                console.error(err); 
+                console.error("Ошибка загрузки данных каталога:", err); 
             } finally { 
                 setLoading(false); 
             }
         };
         fetchData();
     }, []);
-
     const handleToggle = (val, list, setter) => {
         setter(list.includes(val) ? list.filter(i => i !== val) : [...list, val]);
     };
@@ -79,24 +94,34 @@ const Catalog = () => {
         return [...new Set(vals)].filter(Boolean).sort();
     };
 
-    useEffect(() => {
-        const res = products.filter(p => {
-            const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesPrice = p.basePrice <= priceRange.max;
-            const matchesCat = selectedCatIds.length === 0 || p.categories?.some(c => selectedCatIds.includes(c.categoryId));
-            const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
-            const matchesRating = p.rating >= minRating;
+   useEffect(() => {
+    const res = products.filter(p => {
+        const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesPrice = p.basePrice <= priceRange.max;
+        const matchesCat = selectedCatIds.length === 0 || p.categories?.some(c => selectedCatIds.includes(c.categoryId));
+        const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
+        const matchesRating = p.rating >= minRating;
+        
+        // Логика для вариантов (Цвет, Размер, Возраст)
+        const variantMatch = p.variants?.some(v => {
+            const matchesSize = selectedSizes.length === 0 || selectedSizes.includes(v.size);
+            const matchesColor = selectedColors.length === 0 || selectedColors.includes(v.color);
             
-            const variantMatch = p.variants?.some(v => 
-                (selectedSizes.length === 0 || selectedSizes.includes(v.size)) &&
-                (selectedColors.length === 0 || selectedColors.includes(v.color))
-            );
-            
-            return matchesSearch && matchesPrice && matchesCat && matchesBrand && matchesRating && (p.variants?.length ? variantMatch : true);
-        });
-        setFilteredProducts(res);
-    }, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, minRating, products]);
+            // Фильтр по возрасту:
+            // 1. Если у варианта возраст не указан (null), мы решаем: показывать его или нет.
+            // Обычно, если фильтр по возрасту активен, товары без возраста скрываются.
+            const hasAgeData = v.ageMin !== null;
+            const matchesAge = !hasAgeData || (v.ageMin >= ageRange.min && (v.ageMax <= ageRange.max || !v.ageMax));
 
+            return matchesSize && matchesColor && matchesAge;
+        });
+        
+        // Если у товара вообще нет вариантов, он проходит, если подошел по остальным фильтрам
+        return matchesSearch && matchesPrice && matchesCat && matchesBrand && matchesRating && 
+               (p.variants?.length > 0 ? variantMatch : true);
+    });
+    setFilteredProducts(res);
+}, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, ageRange, minRating, products]);
     if (loading) return <div className="text-center my-5 py-5"><div className="spinner-border text-primary shadow-sm"></div></div>;
 
     return (
@@ -121,14 +146,18 @@ const Catalog = () => {
                         <input type="text" className="form-control mb-4 border-0 bg-light py-2 px-3 shadow-none rounded-3" placeholder="Найти..." onChange={e => setSearchTerm(e.target.value)} />
 
                         <FilterSection title="Категории" isOpen={openSections.cat} onToggle={() => setOpenSections({...openSections, cat: !openSections.cat})}>
-                            {categories.filter(c => !c.parentId).map(parent => (
+                            {categories
+                                .filter(c => !c.parentId && c.targetType === 'PRODUCT') // Добавили проверку типа
+                                .map(parent => (
                                 <div key={parent.categoryId} className="mb-2">
                                     <div className="form-check small">
                                         <input className="form-check-input shadow-none" type="checkbox" id={parent.categoryId} checked={selectedCatIds.includes(parent.categoryId)} onChange={() => handleToggle(parent.categoryId, selectedCatIds, setSelectedCatIds)} />
                                         <label className="form-check-label fw-bold" htmlFor={parent.categoryId}>{parent.name}</label>
                                     </div>
                                     <div className="ms-3 ps-2 border-start mt-1">
-                                        {categories.filter(sub => sub.parentId === parent.categoryId).map(sub => (
+                                        {categories
+                                            .filter(sub => sub.parentId === parent.categoryId && sub.targetType === 'PRODUCT')
+                                            .map(sub => (
                                             <div className="form-check small py-1" key={sub.categoryId}>
                                                 <input className="form-check-input shadow-none" type="checkbox" id={sub.categoryId} checked={selectedCatIds.includes(sub.categoryId)} onChange={() => handleToggle(sub.categoryId, selectedCatIds, setSelectedCatIds)} />
                                                 <label className="form-check-label" htmlFor={sub.categoryId}>{sub.name}</label>
@@ -182,7 +211,29 @@ const Catalog = () => {
                                 </div>
                             ))}
                         </FilterSection>
-
+                        <FilterSection title="Возраст (мес.)" isOpen={openSections.age} onToggle={() => setOpenSections({...openSections, age: !openSections.age})}>
+                            <div className="d-flex align-items-center gap-2">
+                                <div className="flex-grow-1">
+                                    <label className="small text-muted mb-1">ОТ</label>
+                                    <input 
+                                        type="number" 
+                                        className="form-control form-control-sm border-0 bg-light rounded-3" 
+                                        value={ageRange.min} 
+                                        onChange={e => setAgeRange({...ageRange, min: Number(e.target.value)})} 
+                                    />
+                                </div>
+                                <div className="mt-4">—</div>
+                                <div className="flex-grow-1">
+                                    <label className="small text-muted mb-1">ДО</label>
+                                    <input 
+                                        type="number" 
+                                        className="form-control form-control-sm border-0 bg-light rounded-3" 
+                                        value={ageRange.max} 
+                                        onChange={e => setAgeRange({...ageRange, max: Number(e.target.value)})} 
+                                    />
+                                </div>
+                            </div>
+                        </FilterSection>
                         <div className="mt-4 pt-3 border-top">
                             <div className="d-flex justify-content-between align-items-center mb-2">
                                 <span className="small text-uppercase fw-bold opacity-50">До</span>

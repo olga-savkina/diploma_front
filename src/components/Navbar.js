@@ -4,28 +4,43 @@ import axios from 'axios';
 
 const Navbar = ({ user, setUser }) => {
     const navigate = useNavigate();
-    
-    // Используем состояние для счетчика, чтобы он обновлялся при изменении localStorage
     const [cartCount, setCartCount] = useState(0);
 
-    const updateCartCount = () => {
-        const cart = JSON.parse(localStorage.getItem('cart')) || [];
-        const count = cart.reduce((sum, item) => sum + item.quantity, 0);
-        setCartCount(count);
-    };
-
     useEffect(() => {
+        const updateCartCount = () => {
+            if (!user) {
+                setCartCount(0);
+                return;
+            }
+
+            const userName = user.username || user.email?.split('@')[0];
+            const cartKey = `cart_${userName}`;
+            
+            try {
+                const cart = JSON.parse(localStorage.getItem(cartKey)) || [];
+                const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+                setCartCount(prev => (prev !== count ? count : prev));
+            } catch (e) {
+                setCartCount(0);
+            }
+        };
+
         updateCartCount();
-        // Слушаем событие 'storage', чтобы обновлять счетчик между вкладками
         window.addEventListener('storage', updateCartCount);
-        return () => window.removeEventListener('storage', updateCartCount);
-    }, []);
+        window.addEventListener('cartUpdated', updateCartCount);
+
+        return () => {
+            window.removeEventListener('storage', updateCartCount);
+            window.removeEventListener('cartUpdated', updateCartCount);
+        };
+    }, [user]);
 
     const handleLogout = async () => {
         try {
             await axios.post('http://localhost:8080/logout', {}, { withCredentials: true });
         } finally {
             setUser(null); 
+            localStorage.removeItem('user');
             navigate('/login');
         }
     };
@@ -46,12 +61,11 @@ const Navbar = ({ user, setUser }) => {
 
                 <div className="collapse navbar-collapse" id="navContent">
                     <ul className="navbar-nav ms-auto align-items-center">
-                        {/* ОБЩИЕ ССЫЛКИ */}
+                        {/* ОБЩИЕ ССЫЛКИ ДЛЯ КЛИЕНТОВ */}
                         {!isAdmin && (
                             <>
                                 <li className="nav-item"><Link className="nav-link" to="/catalog">Каталог</Link></li>
                                 <li className="nav-item"><Link className="nav-link" to="/blog">Блог</Link></li>
-                                {/* СТРАНИЦА О НАС */}
                                 <li className="nav-item"><Link className="nav-link" to="/about">О нас</Link></li>
                             </>
                         )}
@@ -60,7 +74,7 @@ const Navbar = ({ user, setUser }) => {
                             <>
                                 {!isAdmin && (
                                     <>
-                                        {/* ИКОНКА КОРЗИНЫ */}
+                                        {/* КОРЗИНА */}
                                         <li className="nav-item ms-lg-2">
                                             <Link className="nav-link p-0 position-relative" to="/cart" title="Корзина">
                                                 <i className="bi bi-cart3" style={{ fontSize: '1.4rem', color: '#333' }}></i>
@@ -72,7 +86,7 @@ const Navbar = ({ user, setUser }) => {
                                             </Link>
                                         </li>
 
-                                        {/* ИКОНКА ПРОФИЛЯ */}
+                                        {/* ПРОФИЛЬ */}
                                         <li className="nav-item ms-lg-3">
                                             <Link className="nav-link p-0" to="/profile" title="Личный кабинет">
                                                 <i className="bi bi-person-circle" style={{ fontSize: '1.4rem', color: '#0d6efd' }}></i>
@@ -81,11 +95,13 @@ const Navbar = ({ user, setUser }) => {
                                     </>
                                 )}
                                 
-                                {/* ВЫХОД */}
+                                {/* ВЫ ВОШЛИ КАК + КНОПКА ВЫХОДА */}
                                 <li className="nav-item ms-3 ps-3 border-start d-flex align-items-center">
-                                    <div className="d-flex flex-column me-3">
+                                    <div className="d-flex flex-column me-3 text-end">
                                         <span className="text-muted" style={{ fontSize: '0.7rem', lineHeight: '1' }}>Вы вошли как:</span>
-                                        <span className="fw-bold" style={{ fontSize: '0.8rem' }}>{user.email.split('@')[0]}</span>
+                                        <span className="fw-bold" style={{ fontSize: '0.8rem' }}>
+                                            {user.username || user.email?.split('@')[0]}
+                                        </span>
                                     </div>
                                     <button className="btn btn-outline-danger btn-sm rounded-pill px-3" onClick={handleLogout}>
                                         <i className="bi bi-box-arrow-right me-1"></i> Выйти

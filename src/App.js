@@ -8,7 +8,7 @@ import Register from './pages/Register';
 import Home from './pages/Home';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/AdminUsers';
-import AdminWarehouse from './pages/Warehouse';
+import AdminWarehouse from './pages/Warehouse/AdminWarehouse';
 import AdminCategories from './pages/AdminCategories';
 import Catalog from './pages/Catalog';
 import ProductPage from './pages/ProductPage';
