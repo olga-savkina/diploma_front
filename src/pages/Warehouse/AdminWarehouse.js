@@ -95,67 +95,138 @@ const handleReplenish = async (variantId, amount, expiryDate) => {
         });
     };
 
-    const handleImageChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setFormData(prev => ({ ...prev, imageFile: file, imagePreview: URL.createObjectURL(file) }));
-        }
+const handleImageChange = (e) => {
+    const files = Array.from(e.target.files);
+    
+    // Создаем превью для отображения в форме
+    const newPreviews = files.map(file => URL.createObjectURL(file));
+
+    setFormData(prev => ({
+        ...prev,
+        // Добавляем новые файлы к уже выбранным (если хочешь накопление)
+        // Либо просто заменяем: images: files
+        images: [...(prev.images || []), ...files],
+        imagePreviews: [...(prev.imagePreviews || []), ...newPreviews]
+    }));
+};
+
+const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    // Проверка категорий через formData
+    if (!formData.categoryIds || formData.categoryIds.length === 0) {
+        return alert("Выберите хотя бы одну категорию!");
+    }
+    
+    setLoading(true);
+
+    const isEdit = !!formData.productId;
+    const data = new FormData();
+   // Переименовал в data, чтобы не путать с formData из state
+
+    // 1. Формируем JSON данные продукта из formData
+    const productData = {
+        productId: formData.productId || null,
+        name: formData.name,
+        brand: formData.brand,
+        description: formData.description,
+        basePrice: parseFloat(formData.basePrice),
+        // Преобразуем массив ID в объекты для бэкенда
+        categories: formData.categoryIds.map(id => ({ categoryId: id })),
+        isActive: true
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        const data = new FormData();
-        const productBlob = new Blob([JSON.stringify({
-            productId: formData.productId || null,
-            name: formData.name,
-            brand: formData.brand,
-            basePrice: formData.basePrice,
-            description: formData.description,
-            categories: formData.categoryIds.map(id => ({ categoryId: id })),
-            isActive: true
-        })], { type: "application/json" });
+    // 2. Упаковываем JSON в Blob для корректной работы @RequestPart
+    data.append("product", new Blob([JSON.stringify(productData)], { 
+        type: "application/json" 
+    }));
 
-        data.append('product', productBlob);
-        if (formData.imageFile) {
-            data.append("images", formData.imageFile); 
-        } else {
-            data.append("images", new Blob([], { type: "image/jpeg" }), "");
-        }
-
-        try {
-            const url = formData.productId 
-                ? `http://localhost:8080/api/admin/products/${formData.productId}`
-                : 'http://localhost:8080/api/admin/products/add';
-            const method = formData.productId ? 'put' : 'post';
-            
-            await axios[method](url, data, {
-                withCredentials: true,
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
-            setShowForm(false);
-            resetForm();
-            fetchInitialData();
-        } catch (err) {
-            alert("Ошибка сохранения");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const startEdit = (p) => {
-        setFormData({
-            productId: p.productId,
-            name: p.name,
-            brand: p.brand || '',
-            basePrice: p.basePrice,
-            description: p.description || '',
-            categoryIds: p.categories.map(c => c.categoryId),
-            imagePreview: p.images?.[0] ? `http://localhost:8080${p.images[0].imageUrl}` : null,
-            imageFile: null
+    // 3. Добавляем изображения из formData.images (массив файлов)
+    if (formData.images && formData.images.length > 0) {
+        formData.images.forEach(file => {
+            data.append("images", file);
         });
-        setShowForm(true);
-    };
+    } else {
+        // Отправляем пустой блоб, если картинок нет, чтобы не было ошибки 400
+        data.append("images", new Blob([], { type: "image/jpeg" }), "");
+    }
+
+    try {
+        const url = isEdit 
+            ? `http://localhost:8080/api/admin/products/${formData.productId}`
+            : 'http://localhost:8080/api/admin/products/add';
+        
+        const method = isEdit ? 'put' : 'post';
+        
+        await axios({
+            method: method,
+            url: url,
+            data: data,
+            withCredentials: true,
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+
+        setShowForm(false);
+        resetForm();
+        fetchInitialData();
+        alert(isEdit ? "Товар успешно обновлен" : "Товар успешно добавлен");
+    } catch (error) {
+        console.error("Ошибка сохранения:", error.response?.data || error.message);
+        alert("Ошибка сохранения: " + (error.response?.data || "Проверьте консоль"));
+    } finally {
+        setLoading(false);
+    }
+};
+
+// Добавьте эту функцию внутрь компонента AdminWarehouse
+const handleRemoveImage = async (index, imageId = null) => {
+    // 1. Если есть imageId, значит картинка уже в базе данных
+    if (imageId) {
+        if (!window.confirm("Удалить это фото навсегда?")) return;
+        
+        try {
+            await axios.delete(`http://localhost:8080/api/admin/products/${formData.productId}/images/${imageId}`, {
+                withCredentials: true
+            });
+            alert("Фото удалено из базы");
+        } catch (error) {
+            console.error("Ошибка при удалении фото с сервера:", error);
+            alert("Не удалось удалить фото на сервере");
+            return; // Прерываем, чтобы фото не исчезло из интерфейса, если сервер выдал ошибку
+        }
+    }
+
+    // 2. В любом случае обновляем интерфейс (удаляем из стейта)
+    setFormData(prev => ({
+        ...prev,
+        // Фильтруем файлы
+        images: prev.images ? prev.images.filter((_, i) => i !== index) : [],
+        // Фильтруем превью
+        imagePreviews: prev.imagePreviews ? prev.imagePreviews.filter((_, i) => i !== index) : [],
+        // Если у вас в объекте продукта хранятся оригинальные объекты картинок, их тоже фильтруем
+        originalImages: prev.originalImages ? prev.originalImages.filter((_, i) => i !== index) : []
+    }));
+};
+
+// Обнови функцию startEdit в AdminWarehouse.js
+const startEdit = (p) => {
+    // Собираем массив URL всех существующих картинок товара
+    //const existingPreviews = p.images ? p.images.map(img => `http://localhost:8080${img.imageUrl}`) : [];
+
+    setFormData({
+        productId: p.productId,
+        name: p.name,
+        brand: p.brand || '',
+        basePrice: p.basePrice,
+        description: p.description || '',
+        categoryIds: p.categories.map(c => c.categoryId),
+        // Сохраняем объекты целиком, чтобы получить imageId
+        existingImages: p.images || [], 
+        imagePreviews: p.images ? p.images.map(img => `http://localhost:8080${img.imageUrl}`) : [],
+        images: [] 
+    });
+    setShowForm(true);
+};
 
     const handleDelete = async (id) => {
         if (window.confirm("Вы уверены?")) {
@@ -202,10 +273,15 @@ const handleReplenish = async (variantId, amount, expiryDate) => {
             </div>
 
             {showForm && (
-                <ProductForm 
-                    product={formData} categories={categories} loading={loading}
-                    onChange={handleInputChange} onCategoryChange={handleCategoryChange}
-                    onImageChange={handleImageChange} onSubmit={handleSubmit}
+               <ProductForm 
+                    product={formData} 
+                    categories={categories} 
+                    loading={loading}
+                    onChange={handleInputChange} 
+                    onCategoryChange={handleCategoryChange}
+                    onImageChange={handleImageChange} 
+                    onRemoveImage={handleRemoveImage} // ПЕРЕДАЕМ ФУНКЦИЮ УДАЛЕНИЯ
+                    onSubmit={handleSubmit}
                     onCancel={() => { setShowForm(false); resetForm(); }}
                 />
             )}

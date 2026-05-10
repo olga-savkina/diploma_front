@@ -86,9 +86,15 @@ const VariantManager = ({ productId, product, variants, onRefresh, onReplenish }
                     const payload = {
                         ...variantForm,
                         size: size || null,
-                        quantity: Number(variantForm.quantity) || 0,
-                        sku: `SKU-${productId.substring(0, 5)}-${size || 'N'}-${Date.now()}`
+                        sku: `SKU-${productId.substring(0, 5)}-${size || 'N'}-${Date.now()}`,
+                        stock: {
+                            quantity: Number(variantForm.quantity) || 0,
+                            productionDate: variantForm.productionDate,
+                            expiryDate: variantForm.expiryDate
+                        }
                     };
+                    // ОТЛАДКА: Посмотри в консоль браузера перед отправкой!
+                console.log("ОТПРАВЛЯЕМ НА СЕРВЕР:", payload);
                     return axios.post(`http://localhost:8080/api/admin/variants/product/${productId}`, payload, config);
                 });
                 await Promise.all(promises);

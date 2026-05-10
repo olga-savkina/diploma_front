@@ -19,6 +19,7 @@ import AdminArticles from './pages/AdminArticles';
 import Blog from './pages/Blog';
 import AboutPage from './pages/AboutPage';
 import Analytics from './pages/Analytics';
+import NotFound from './pages/NotFound';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -72,6 +73,7 @@ function App() {
               <Route path="/admin/analytics" element={<Analytics />} />
             <Route path="/admin/blog" element={<AdminArticles />} />
             <Route path="/" element={<Navigate to="/home" />} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </div>
       </div>

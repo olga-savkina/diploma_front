@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom'; 
 
 const colorMap = {
     "белый": "#ffffff", "черный": "#000000", "красный": "#ff0000",
@@ -14,18 +14,21 @@ const Catalog = () => {
     const [categories, setCategories] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [loading, setLoading] = useState(true);
+
     const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
-    const [ageRange, setAgeRange] = useState({ min: 0, max: 120 }); 
+    const [ageRange, setAgeRange] = useState({ min: 0, max: 120 });
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCatIds, setSelectedCatIds] = useState([]);
     const [selectedBrands, setSelectedBrands] = useState([]);
     const [selectedSizes, setSelectedSizes] = useState([]);
     const [selectedColors, setSelectedColors] = useState([]);
     const [absoluteMaxPrice, setAbsoluteMaxPrice] = useState(0);
-    const [minRating, setMinRating] = useState(0); 
+    const [minRating, setMinRating] = useState(0);
 
-    const [openSections, setOpenSections] = useState({ cat: true, brand: true, size: true, color: true, rating: true });
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [openSections, setOpenSections] = useState({ cat: true, brand: true, size: true, color: true, rating: true, age: true });
 
+    // 1. ЗАГРУЗКА ДАННЫХ
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -35,15 +38,14 @@ const Catalog = () => {
                 ]);
                 
                 const allProducts = pRes.data;
+                const allCats = cRes.data;
 
-                // Получаем рейтинги параллельно для всех товаров
+                // Добавляем рейтинги
                 const productsWithRating = await Promise.all(allProducts.map(async (p) => {
                     try {
                         const rRes = await axios.get(`http://localhost:8080/api/reviews/${p.productId}`);
                         const reviews = rRes.data;
-                        const avg = reviews.length > 0 
-                            ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length) 
-                            : 0;
+                        const avg = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length) : 0;
                         return { ...p, rating: avg, reviewCount: reviews.length };
                     } catch {
                         return { ...p, rating: 0, reviewCount: 0 };
@@ -51,40 +53,97 @@ const Catalog = () => {
                 }));
 
                 setProducts(productsWithRating);
-                setCategories(cRes.data);
-                setFilteredProducts(productsWithRating);
+                setCategories(allCats);
 
-                // Инициализация фильтров
                 if (productsWithRating.length > 0) {
-                    // Цены
                     const maxPrice = Math.ceil(Math.max(...productsWithRating.map(p => p.basePrice)));
                     setAbsoluteMaxPrice(maxPrice);
-                    setPriceRange({ min: 0, max: maxPrice });
-
-                    // Возраст (собираем все ageMin и ageMax из всех вариантов всех товаров)
-                    const allAgeValues = productsWithRating.flatMap(p => 
-                        p.variants?.flatMap(v => [v.ageMin, v.ageMax]) || []
-                    ).filter(val => val !== null && val !== undefined);
-
-                    if (allAgeValues.length > 0) {
-                        setAgeRange({ 
-                            min: Math.min(...allAgeValues), 
-                            max: Math.max(...allAgeValues) 
-                        });
-                    } else {
-                        setAgeRange({ min: 0, max: 36 }); // Значение по умолчанию
-                    }
+                    setPriceRange(prev => ({ ...prev, max: maxPrice }));
                 }
-            } catch (err) { 
-                console.error("Ошибка загрузки данных каталога:", err); 
-            } finally { 
-                setLoading(false); 
+            } catch (err) {
+                console.error("Ошибка загрузки данных:", err);
+            } finally {
+                setLoading(false);
             }
         };
         fetchData();
     }, []);
+
+
+  // 2. СИНХРОНИЗАЦИЯ: ЧИТАЕМ URL
+useEffect(() => {
+    const catParam = searchParams.get('category');
+    
+    if (categories.length > 0 && catParam) {
+        // Создаем словарь соответствия (slug -> русское название)
+        const categoryMap = {
+            'toys': 'игрушки',
+            'food': 'еда',
+            'clothes': 'одежда',
+            'strollers': 'коляски',
+            'cosmetics': 'косметика'
+        };
+
+        // 1. Пытаемся найти русское название через словарь
+        // 2. Если в словаре нет, используем сам параметр (на случай если он уже на русском)
+        const searchName = categoryMap[catParam.toLowerCase()] || catParam.toLowerCase();
+        
+        console.log("Ищем в базе категорию:", searchName);
+
+        const foundIds = categories
+            .filter(c => c.name.toLowerCase() === searchName)
+            .map(c => c.categoryId);
+
+        if (foundIds.length > 0) {
+            console.log("Нашли ID для фильтра:", foundIds);
+            setSelectedCatIds(foundIds);
+        } else {
+            console.warn("Категория не найдена в базе:", searchName);
+        }
+    }
+}, [categories, searchParams]);
+
+    // 3. ФИЛЬТРАЦИЯ
+    useEffect(() => {
+        const res = products.filter(p => {
+            const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesPrice = p.basePrice <= priceRange.max;
+            const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
+            const matchesRating = (p.rating || 0) >= minRating;
+
+            // Логика категорий с учетом вложенности и строгой проверки ID
+            const matchesCat = selectedCatIds.length === 0 || p.categories?.some(productCat => {
+                const isDirectMatch = selectedCatIds.includes(productCat.categoryId);
+                const isParentMatch = selectedCatIds.includes(productCat.parentId);
+                return isDirectMatch || isParentMatch;
+            });
+
+            const variantMatch = p.variants?.some(v => {
+                const matchesSize = selectedSizes.length === 0 || selectedSizes.includes(v.size);
+                const matchesColor = selectedColors.length === 0 || selectedColors.includes(v.color);
+                const matchesAge = v.ageMin === null || (v.ageMin >= ageRange.min && (v.ageMax <= ageRange.max || !v.ageMax));
+                return matchesSize && matchesColor && matchesAge;
+            });
+
+            return matchesSearch && matchesPrice && matchesCat && matchesBrand && matchesRating && 
+                   (p.variants?.length > 0 ? variantMatch : true);
+        });
+        setFilteredProducts(res);
+    }, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, ageRange, minRating, products]);
+
     const handleToggle = (val, list, setter) => {
-        setter(list.includes(val) ? list.filter(i => i !== val) : [...list, val]);
+        const newList = list.includes(val) ? list.filter(i => i !== val) : [...list, val];
+        setter(newList);
+        
+        // Синхронизируем URL назад, если вручную кликаем фильтр
+        if (setter === setSelectedCatIds) {
+            if (newList.length === 1) {
+                const cat = categories.find(c => c.categoryId === newList[0]);
+                if (cat) setSearchParams({ category: cat.name.toLowerCase() }, { replace: true });
+            } else if (newList.length === 0) {
+                setSearchParams({}, { replace: true });
+            }
+        }
     };
 
     const getUniqueValues = (key, isVariant = false) => {
@@ -94,36 +153,16 @@ const Catalog = () => {
         return [...new Set(vals)].filter(Boolean).sort();
     };
 
-   useEffect(() => {
-    const res = products.filter(p => {
-        const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesPrice = p.basePrice <= priceRange.max;
-        const matchesCat = selectedCatIds.length === 0 || p.categories?.some(c => selectedCatIds.includes(c.categoryId));
-        const matchesBrand = selectedBrands.length === 0 || selectedBrands.includes(p.brand);
-        const matchesRating = p.rating >= minRating;
-        
-        // Логика для вариантов (Цвет, Размер, Возраст)
-        const variantMatch = p.variants?.some(v => {
-            const matchesSize = selectedSizes.length === 0 || selectedSizes.includes(v.size);
-            const matchesColor = selectedColors.length === 0 || selectedColors.includes(v.color);
-            
-            // Фильтр по возрасту:
-            // 1. Если у варианта возраст не указан (null), мы решаем: показывать его или нет.
-            // Обычно, если фильтр по возрасту активен, товары без возраста скрываются.
-            const hasAgeData = v.ageMin !== null;
-            const matchesAge = !hasAgeData || (v.ageMin >= ageRange.min && (v.ageMax <= ageRange.max || !v.ageMax));
+    if (loading) return (
+        <div className="text-center my-5 py-5">
+            <div className="spinner-border text-primary shadow-sm"></div>
+            <p className="mt-2 text-muted">Загрузка товаров...</p>
+        </div>
+    );
 
-            return matchesSize && matchesColor && matchesAge;
-        });
-        
-        // Если у товара вообще нет вариантов, он проходит, если подошел по остальным фильтрам
-        return matchesSearch && matchesPrice && matchesCat && matchesBrand && matchesRating && 
-               (p.variants?.length > 0 ? variantMatch : true);
-    });
-    setFilteredProducts(res);
-}, [searchTerm, selectedCatIds, selectedBrands, selectedSizes, selectedColors, priceRange, ageRange, minRating, products]);
     if (loading) return <div className="text-center my-5 py-5"><div className="spinner-border text-primary shadow-sm"></div></div>;
 
+    if (loading) return <div className="text-center my-5 py-5"><div className="spinner-border text-primary shadow-sm"></div></div>;
     return (
         <div className="container-fluid my-5 px-lg-5">
             <style>{`

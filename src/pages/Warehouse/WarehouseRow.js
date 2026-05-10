@@ -14,12 +14,25 @@ const WarehouseRow = ({ product, onEdit, onDelete, onRefresh, onReplenish }) => 
         <React.Fragment>
             {/* Основная строка товара */}
             <tr onClick={() => setIsExpanded(!isExpanded)} style={{ cursor: 'pointer' }} className={isExpanded ? 'table-active' : ''}>
-                <td className="ps-4">
-                    {product.images?.[0] ? (
-                        <img src={`http://localhost:8080${product.images[0].imageUrl}`} alt="" 
-                             style={{ width: '45px', height: '45px', objectFit: 'cover', borderRadius: '8px' }} />
-                    ) : '📦'}
-                </td>
+               <td className="ps-4">
+    <div className="d-flex gap-1 overflow-auto" style={{ maxWidth: '120px' }}>
+        {product.images && product.images.length > 0 ? (
+            product.images.map((img, idx) => (
+                <img 
+                    key={img.imageId}
+                    src={`http://localhost:8080${img.imageUrl}`} 
+                    alt="preview" 
+                    className="rounded-2 shadow-sm" 
+                    style={{ width: '40px', height: '40px', objectFit: 'cover', flexShrink: 0 }} 
+                />
+            ))
+        ) : (
+            <div className="bg-light rounded-2 text-muted d-flex align-items-center justify-content-center" style={{ width: '40px', height: '40px' }}>
+                <i className="bi bi-image" style={{ fontSize: '10px' }}></i>
+            </div>
+        )}
+    </div>
+</td>
                 <td>
                     <div className="fw-bold">{product.name}</div>
                     <small className="text-muted">{product.brand}</small>
